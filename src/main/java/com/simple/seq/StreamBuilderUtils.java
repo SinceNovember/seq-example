@@ -1,4 +1,4 @@
-package com.simple.test;
+package com.simple.seq;
 
 import java.util.Iterator;
 import java.util.NoSuchElementException;

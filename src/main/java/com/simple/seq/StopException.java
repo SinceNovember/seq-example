@@ -1,4 +1,4 @@
-package com.simple.test;
+package com.simple.seq;
 
 /**
  * .

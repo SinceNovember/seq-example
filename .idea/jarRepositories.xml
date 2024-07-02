@@ -2,6 +2,11 @@
 <project version="4">
   <component name="RemoteRepositoriesConfiguration">
     <remote-repository>
+      <option name="id" value="central" />
+      <option name="name" value="Central Repository" />
+      <option name="url" value="https://repo.maven.apache.org/maven2" />
+    </remote-repository>
+    <remote-repository>
       <option name="id" value="maven-public" />
       <option name="name" value="maven-public" />
       <option name="url" value="http://ec2-34-213-247-117.us-west-2.compute.amazonaws.com:8081/repository/maven-public/" />
