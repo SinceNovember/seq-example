@@ -25,32 +25,6 @@ public interface Seq<T> extends Seq0<Consumer<T>>{
         };
     }
 
-    default void consume(Consumer<T> consumer, int n, Consumer<T> substitute) {
-        if (n > 0) {
-            int[] a = {n - 1};
-            consume(t -> {
-                if (a[0] < 0) {
-                    consumer.accept(t);
-                } else {
-                    a[0]--;
-                    substitute.accept(t);
-                }
-            });
-        } else {
-            consume(consumer);
-        }
-    }
-
-    default void consumerIndexed(IndexObjConsumer<T> consumer) {
-        int[] a = {0};
-        consume(t -> consumer.accept(a[0]++, t));
-    }
-
-    default void consumeIndexedTillStop(IndexObjConsumer<T> consumer) {
-        int[] a = {0};
-        consumeTillStop(t -> consumer.accept(a[0]++, t));
-    }
-
     static <T> ItrSeq<T> flatIterable(Iterable<Optional<T>> iterable) {
         return () -> ItrUtil.flatOptional(iterable.iterator());
     }
@@ -58,6 +32,10 @@ public interface Seq<T> extends Seq0<Consumer<T>>{
     static <T> ItrSeq<T> flatIterable(Iterable<T>... iterables) {
         return () -> ItrUtil.flat(Arrays.asList(iterables).iterator());
     }
+
+
+
+
 
     static <T> ItrSeq<T> gen(Supplier<T> supplier) {
         return () -> new Iterator<T>() {
@@ -124,6 +102,10 @@ public interface Seq<T> extends Seq0<Consumer<T>>{
 
     static <T> Seq<T> of(T... ts) {
         return of(Arrays.asList(ts));
+    }
+
+    static <K, V> SeqMap<K, V> of(Map<K, V> map) {
+        return SeqMap.of(map);
     }
 
     static <T> ItrSeq<T> repeat(int n, T t) {
@@ -203,6 +185,10 @@ public interface Seq<T> extends Seq0<Consumer<T>>{
         };
     }
 
+    default ItrSeq<T> asIterable() {
+        return toBatched();
+    }
+
     default void println() {
         consume(System.out::println);
     }
@@ -211,6 +197,259 @@ public interface Seq<T> extends Seq0<Consumer<T>>{
     default T reduce(BinaryOperator<T> binaryOperator) {
         return reduce(Transducer.of(binaryOperator));
     }
+
+    default double average(ToDoubleFunction<T> function) {
+        return average(function, null);
+    }
+
+    default double average(ToDoubleFunction<T> function, ToDoubleFunction<T> weightFunction) {
+        return reduce(Reducer.average(function, weightFunction));
+    }
+
+    default SizedSeq<T> cache() {
+        return toBatched();
+    }
+
+    default Seq<ArraySeq<T>> chunked(int size) {
+        return chunked(size, Reducer.toList(size));
+    }
+
+    default <V> Seq<V> chunked(int size, Reducer<T, V> reducer) {
+        if (size <= 0) {
+            throw new IllegalArgumentException("non-positive size");
+        }
+        Supplier<V> supplier = reducer.supplier();
+        BiConsumer<V, T> accumulator = reducer.accumulator();
+        Consumer<V> finisher = reducer.finisher();
+        return c -> {
+            IntPair<V> intPair = new IntPair<>(0, supplier.get());
+            reduce(intPair, (p, t) -> {
+                if (p.intVal == size) {
+                    if (finisher != null) {
+                        finisher.accept(p.it);
+                    }
+                    c.accept(p.it);
+                    p.it = supplier.get();
+                    p.intVal = 0;
+                }
+                accumulator.accept(p.it, t);
+                p.intVal++;
+            });
+            if (intPair.it != null) {
+                c.accept(intPair.it);
+            }
+        };
+    }
+
+    default <V, E> Seq<E> chunked(int size, Transducer<T, V, E> transducer) {
+        return chunked(size, transducer.reducer()).map(transducer.transformer());
+    }
+
+
+    default Seq<T> circle() {
+        return c -> {
+            while (true) {
+                consume(c);
+            }
+        };
+    }
+
+    default <C extends Collection<T>> C collectBy(IntFunction<C> constructor) {
+        return reduce(constructor.apply(sizeOrDefault()), Collection::add);
+    }
+
+    default void consume(Consumer<T> consumer, int n, Consumer<T> substitute) {
+        if (n > 0) {
+            int[] a = {n - 1};
+            consume(t -> {
+                if (a[0] < 0) {
+                    consumer.accept(t);
+                } else {
+                    a[0]--;
+                    substitute.accept(t);
+                }
+            });
+        } else {
+            consume(consumer);
+        }
+    }
+
+    default void consumerIndexed(IndexObjConsumer<T> consumer) {
+        int[] a = {0};
+        consume(t -> consumer.accept(a[0]++, t));
+    }
+
+    default void consumeIndexedTillStop(IndexObjConsumer<T> consumer) {
+        int[] a = {0};
+        consumeTillStop(t -> consumer.accept(a[0]++, t));
+    }
+
+    default int count() {
+        return reduce(Reducer.count());
+    }
+
+    default int count(Predicate<T> predicate) {
+        return reduce(Reducer.count(predicate));
+    }
+
+    default int countNot(Predicate<T> predicate) {
+        return reduce(Reducer.countNot(predicate));
+    }
+
+    default Seq<T> distinct() {
+        return c -> reduce(new HashSet<>(), (set, t) -> {
+            if (set.add(t)) {
+                c.accept(t);
+            }
+        });
+    }
+
+    default <E> Seq<T> distinctBy(Function<T, E> function) {
+        return c -> reduce(new HashSet<>(), (set, t) -> {
+            if (set.add(function.apply(t))) {
+                c.accept(t);
+            }
+        });
+    }
+
+    default Seq<T> drop(int n) {
+        return n <= 0 ? this : partial(n, nothing());
+    }
+
+    default Seq<T> dropWhile(Predicate<T> predicate) {
+        return c -> foldBoolean(false, (b, t) -> {
+            if (b || !predicate.test(t)) {
+                c.accept(t);
+                return true;
+            }
+            return false;
+        });
+    }
+
+    default Seq<T> duplicateAll(int times) {
+        return c -> {
+            for (int i = 0; i < times; i++) {
+                consume(c);
+            }
+        };
+    }
+
+    default Seq<T> duplicateEach(int times) {
+        return c -> consume(t -> {
+            for (int i = 0; i < times; i++) {
+                c.accept(t);
+            }
+        });
+    }
+
+    default Seq<T> duplicateIf(int times, Predicate<T> predicate) {
+        return c -> consume(t -> {
+            if (predicate.test(t)) {
+                for (int i = 0; i < times; i++) {
+                    c.accept(t);
+                }
+            } else {
+                c.accept(t);
+            }
+        });
+    }
+
+    default Seq<T> filter(int n, Predicate<T> predicate) {
+        return predicate == null ? this : c -> consume(c, n, t -> {
+            if (predicate.test(t)) {
+                c.accept(t);
+            }
+        });
+    }
+
+    default Seq<T> filter(Predicate<T> predicate) {
+        System.out.println("filter1");
+        return predicate == null ? this : c -> {
+            System.out.println("filter2");
+            consume(t -> {
+                System.out.println("filter3");
+                if (predicate.test(t)) {
+                    c.accept(t);
+                }
+            });
+        };
+    }
+
+    default Seq<T> filterIn(Collection<T> collection) {
+        return collection == null ? this : filter(collection::contains);
+    }
+
+    default Seq<T> filterIn(Map<T, ?> map) {
+        return map == null ? this : filter(map::containsKey);
+    }
+
+    default Seq<T> filterIndexed(IndexObjPredicate<T> predicate) {
+        return predicate == null ? this : c -> consumeIndexed((i, t) -> {
+            if (predicate.test(i, t)) {
+                c.accept(t);
+            }
+        });
+    }
+
+    default <E> Seq<E> filterInstance(Class<E> cls) {
+        return c -> consume(t -> {
+            if (cls.isInstance(t)) {
+                c.accept(cls.cast(t));
+            }
+        });
+    }
+
+    default Seq<T> filterNot(Predicate<T> predicate) {
+        return predicate == null ? this : filter(predicate.negate());
+    }
+
+    default Seq<T> filterNotIn(Collection<T> collection) {
+        return collection == null ? this : filterNot(collection::contains);
+    }
+
+    default Seq<T> filterNotIn(Map<T, ?> map) {
+        return map == null ? this : filterNot(map::containsKey);
+    }
+
+    default Seq<T> filterNotNull() {
+        return filter(Objects::nonNull);
+    }
+
+
+    default Optional<T> find(Predicate<T> predicate) {
+        Mutable<T> m = new Mutable<>(null);
+        consumeTillStop(t -> {
+            if (predicate.test(t)) {
+                m.set(t);
+            }
+        });
+        return m.toOptional();
+    }
+
+    default Optional<T> findDuplicate() {
+        Set<T> set = new HashSet<>(sizeOrDefault());
+        return find(t -> !set.add(t));
+    }
+
+    default Optional<T> findNot(Predicate<T> predicate) {
+        return find(predicate.negate());
+    }
+
+    default T first() {
+        Mutable<T> m = new Mutable<>(null);
+        consumeTillStop(t -> {
+            m.it = t;
+            stop();
+        });
+        return m.it;
+    }
+
+    default Optional<T> firstMaybe() {
+        return find(t -> true);
+    }
+
+
+
 
 
     default <E> E reduce(E des, BiConsumer<E, T> accumulator) {
@@ -258,15 +497,8 @@ public interface Seq<T> extends Seq0<Consumer<T>>{
     }
 
 
-
-    default Optional<T> find(Predicate<T> predicate) {
-        Mutable<T> m = new Mutable<>(null);
-        consumeTillStop(t -> {
-            if (predicate.test(t)) {
-                m.set(t);
-            }
-        });
-        return m.toOptional();
+    default BatchedSeq<T> toBatched() {
+        return reduce(new BatchedSeq<>(), BatchedSeq::add);
     }
 
     interface IntObjToInt<T> {
