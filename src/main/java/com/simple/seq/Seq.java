@@ -1,6 +1,7 @@
 package com.simple.seq;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -32,10 +33,6 @@ public interface Seq<T> extends Seq0<Consumer<T>>{
     static <T> ItrSeq<T> flatIterable(Iterable<T>... iterables) {
         return () -> ItrUtil.flat(Arrays.asList(iterables).iterator());
     }
-
-
-
-
 
     static <T> ItrSeq<T> gen(Supplier<T> supplier) {
         return () -> new Iterator<T>() {
@@ -189,11 +186,6 @@ public interface Seq<T> extends Seq0<Consumer<T>>{
         return toBatched();
     }
 
-    default void println() {
-        consume(System.out::println);
-    }
-
-
     default T reduce(BinaryOperator<T> binaryOperator) {
         return reduce(Transducer.of(binaryOperator));
     }
@@ -274,7 +266,7 @@ public interface Seq<T> extends Seq0<Consumer<T>>{
         }
     }
 
-    default void consumerIndexed(IndexObjConsumer<T> consumer) {
+    default void consumeIndexed(IndexObjConsumer<T> consumer) {
         int[] a = {0};
         consume(t -> consumer.accept(a[0]++, t));
     }
@@ -448,9 +440,442 @@ public interface Seq<T> extends Seq0<Consumer<T>>{
         return find(t -> true);
     }
 
+    default <E> Seq<E> flatIterable(Function<T, Iterable<E>> function) {
+        return c -> consume(t -> function.apply(t).forEach(c));
+    }
+
+    default <E> Seq<E> flatMap(Function<T, Seq<E>> function) {
+        return c -> consume(t -> function.apply(t).consume(c));
+    }
+
+    default <E> Seq<E> flatOptional(Function<T, Optional<E>> function) {
+        return c -> consume(t -> function.apply(t).ifPresent(c));
+    }
+
+    default <E> E fold(E init, BiFunction<E, T, E> function) {
+        Mutable<E> m = new Mutable<>(init);
+        consume(t -> m.it = function.apply(m.it, t));
+        return m.it;
+    }
+
+    default int foldInt(int init, IntObjToInt<T> function) {
+        int[] a = {init};
+        consume(t -> a[0] = function.apply(a[0], t));
+        return a[0];
+    }
+
+    default double foldDouble(double init, DoubleObjToDouble<T> function) {
+        double[] a = {init};
+        consume(t -> a[0] = function.apply(a[0], t));
+        return a[0];
+    }
+
+    default long foldLong(long init, LongObjToLong<T> function) {
+        long[] a = {init};
+        consume(t -> a[0] = function.apply(a[0], t));
+        return a[0];
+    }
+
+    default boolean foldBoolean(boolean init, BooleanObjToBoolean<T> function) {
+        boolean[] a = {init};
+        consume(t -> a[0] = function.apply(a[0], t));
+        return a[0];
+    }
+
+    default <E> E foldAtomic(E init, BiFunction<E, T, E> function) {
+        AtomicReference<E> m = new AtomicReference<>(init);
+        consume(t -> m.updateAndGet(e -> function.apply(e, t)));
+        return m.get();
+    }
+
+
+    default <K> SeqMap<K, ArraySeq<T>> groupBy(Function<T, K> toKey) {
+        return groupBy(toKey, Reducer.toList());
+    }
+
+    default <K> SeqMap<K, T> groupBy(Function<T, K> toKey, BinaryOperator<T> operator) {
+        return groupBy(toKey, Transducer.of(operator));
+    }
+
+    default <K, E> SeqMap<K, ArraySeq<E>> groupBy(Function<T, K> toKey, Function<T, E> toValue) {
+        return groupBy(toKey, Reducer.mapping(toValue));
+    }
+
+    default <K, V> SeqMap<K, V> groupBy(Function<T, K> toKey, Reducer<T, V> reducer) {
+        return reduce(Reducer.groupBy(toKey, reducer));
+    }
+
+    default <K, V, E> SeqMap<K, E> groupBy(Function<T, K> toKey, Transducer<T, V, E> transducer) {
+        return reduce(Reducer.groupBy(toKey, transducer));
+    }
+
+    default String join(String sep) {
+        return join(sep, Object::toString);
+    }
+
+    default String join(String sep, Function<T, String> function) {
+        return reduce(new StringJoiner(sep), (j, t) -> j.add(function.apply(t))).toString();
+    }
+
+    default T last() {
+        return reduce(new Mutable<T>(null), Mutable::set).it;
+    }
+
+    default Optional<T> last(Predicate<T> predicate) {
+        return filter(predicate).lastMaybe();
+    }
+
+    default Optional<T> lastMaybe() {
+        Mutable<T> m = new Mutable<>(null);
+        consume(m::set);
+        return m.toOptional();
+    }
+
+    default Optional<T> lastNot(Predicate<T> predicate) {
+        return last(predicate.negate());
+    }
+
+    default Lazy<T> lazyLast() {
+        return new Mutable<T>(null) {
+            @Override
+            protected void eval() {
+                consume(t -> it = t);
+            }
+        };
+    }
+
+    default Lazy<T> lazyReduce(BinaryOperator<T> binaryOperator) {
+        return Lazy.of(() -> reduce(binaryOperator));
+    }
+
+    default <E> Lazy<E> lazyReduce(Reducer<T, E> reducer) {
+        return Lazy.of(() -> reduce(reducer));
+    }
+
+    default <E, V> Lazy<E> lazyReduce(Transducer<T, V, E> transducer) {
+        return Lazy.of(() -> reduce(transducer));
+    }
+
+    default <E> Seq<E> map(Function<T, E> function) {
+        return c -> {
+            consume(t -> {
+                c.accept(function.apply(t));
+            });
+        };
+    }
+
+    default <E> Seq<E> map(Function<T, E> function, int n, Function<T, E> substitute) {
+        return n <= 0 ? map(function) : c -> {
+            int[] a = {n - 1};
+            consume(t -> {
+                if (a[0] < 0) {
+                    c.accept(function.apply(t));
+                } else {
+                    a[0]--;
+                    c.accept(substitute.apply(t));
+                }
+            });
+        };
+    }
+
+    default <E> Seq<E> mapIndexed(IndexObjFunction<T, E> function) {
+        return c -> consumeIndexed((i, t) -> c.accept(function.apply(i, t)));
+    }
+
+    default <E> Seq<E> mapMaybe(Function<T, E> function) {
+        return c -> consume(t -> {
+            if (t != null) {
+                c.accept(function.apply(t));
+            }
+        });
+    }
+
+    default <E> Seq<E> mapNotNull(Function<T, E> function) {
+        return c -> consume(t -> {
+            E e = function.apply(t);
+            if (e != null) {
+                c.accept(e);
+            }
+        });
+    }
+
+    default Seq2<T, T> mapPair(boolean overlapping) {
+        return c -> reduce(new BoolPair<>(false, (T)null), (p, t) -> {
+            if (p.flag) {
+                c.accept(p.it, t);
+            }
+            p.flag = overlapping || !p.flag;
+            p.it = t;
+        });
+    }
+
+    default <V> Seq<V> mapSub(Predicate<T> first, Predicate<T> last, Reducer<T, V> reducer) {
+        Supplier<V> supplier = reducer.supplier();
+        BiConsumer<V, T> accumulator = reducer.accumulator();
+        return c -> fold((V)null, (v, t) -> {
+            if (v == null && first.test(t)) {
+                v = supplier.get();
+                accumulator.accept(v, t);
+            } else if (v != null) {
+                accumulator.accept(v, t);
+                if (last.test(t)) {
+                    c.accept(v);
+                    return null;
+                }
+            }
+            return v;
+        });
+    }
+
+    default Seq<ArraySeq<T>> mapSub(Predicate<T> takeWhile) {
+        return mapSub(takeWhile, Reducer.toList());
+    }
+
+    default <V> Seq<V> mapSub(Predicate<T> takeWhile, Reducer<T, V> reducer) {
+        Supplier<V> supplier = reducer.supplier();
+        BiConsumer<V, T> accumulator = reducer.accumulator();
+        return c -> {
+            V last = fold(null, (v, t) -> {
+                if (takeWhile.test(t)) {
+                    if (v == null) {
+                        v = supplier.get();
+                    }
+                    accumulator.accept(v, t);
+                    return v;
+                } else {
+                    if (v != null) {
+                        c.accept(v);
+                    }
+                    return null;
+                }
+            });
+            if (last != null) {
+                c.accept(last);
+            }
+        };
+    }
+
+    default Seq<ArraySeq<T>> mapSub(T first, T last) {
+        return mapSub(first, last, Reducer.toList());
+    }
+
+    default <V> Seq<V> mapSub(T first, T last, Reducer<T, V> reducer) {
+        return mapSub(first::equals, last::equals, reducer);
+    }
+
+    default IntSeq mapToInt(ToIntFunction<T> function) {
+        return c -> consume(t -> c.accept(function.applyAsInt(t)));
+    }
+
+    default T max(Comparator<T> comparator) {
+        return reduce(Reducer.max(comparator));
+    }
+
+    default <V extends Comparable<V>> Pair<T, V> maxBy(Function<T, V> function) {
+        return reduce(Reducer.maxBy(function));
+    }
+
+    default T min(Comparator<T> comparator) {
+        return reduce(Reducer.min(comparator));
+    }
+
+    default <V extends Comparable<V>> Pair<T, V> minBy(Function<T, V> function) {
+        return reduce(Reducer.minBy(function));
+    }
+
+    default boolean none(Predicate<T> predicate) {
+        return !find(predicate).isPresent();
+    }
+
+    default Seq<T> onEach(Consumer<T> consumer) {
+        return c -> consume(consumer.andThen(c));
+    }
+
+    default Seq<T> onEach(int n, Consumer<T> consumer) {
+        return c -> consume(c, n, consumer.andThen(c));
+    }
+
+    default Seq<T> onEachIndexed(IndexObjConsumer<T> consumer) {
+        return c -> consumeIndexed((i, t) -> {
+            consumer.accept(i, t);
+            c.accept(t);
+        });
+    }
+
+    default <A, B> Seq2<A, B> pair(Function<T, A> f1, Function<T, B> f2) {
+        return c -> consume(t -> c.accept(f1.apply(t), f2.apply(t)));
+    }
+
+    default <E> Seq2<E, T> pairBy(Function<T, E> function) {
+        return c -> consume(t -> c.accept(function.apply(t), t));
+    }
+
+    default <E> Seq2<E, T> pairByNotNull(Function<T, E> function) {
+        return c -> consume(t -> {
+            E e = function.apply(t);
+            if (e != null) {
+                c.accept(e, t);
+            }
+        });
+    }
+
+    default <E> Seq2<T, E> pairWith(Function<T, E> function) {
+        return c -> consume(t -> c.accept(t, function.apply(t)));
+    }
+
+    default <E> Seq2<T, E> pairWithNotNull(Function<T, E> function) {
+        return c -> consume(t -> {
+            E e = function.apply(t);
+            if (e != null) {
+                c.accept(t, e);
+            }
+        });
+    }
 
 
 
+    default Seq<T> partial(int n, Consumer<T> substitute) {
+        return c -> consume(c, n, substitute);
+    }
+
+    default void printAll(String sep) {
+        if ("\n".equals(sep)) {
+            println();
+        } else {
+            System.out.println(join(sep));
+        }
+    }
+
+    default void println() {
+        consume(System.out::println);
+    }
+
+    default Seq<T> replace(int n, UnaryOperator<T> operator) {
+        return c -> consume(c, n, t -> c.accept(operator.apply(t)));
+    }
+
+    default ArraySeq<T> reverse() {
+        return reduce(Reducer.reverse());
+    }
+
+    default int sizeOrDefault() {
+        return 10;
+    }
+
+    default <E> Seq<E> runningFold(E init, BiFunction<E, T, E> function) {
+        return c -> fold(init, (e, t) -> {
+            e = function.apply(e, t);
+            c.accept(e);
+            return e;
+        });
+    }
+
+    default <E extends Comparable<E>> ArraySeq<T> sortBy(Function<T, E> function) {
+        return sortWith(Comparator.comparing(function));
+    }
+
+    default <E extends Comparable<E>> ArraySeq<T> sortByDesc(Function<T, E> function) {
+        return sortWith(Comparator.comparing(function).reversed());
+    }
+
+    default <E extends Comparable<E>> Seq<T> sortCached(Function<T, E> function) {
+        return map(t -> new Pair<>(t, function.apply(t)))
+                .sortBy(p -> p.second)
+                .map(p -> p.first);
+    }
+
+    default <E extends Comparable<E>> Seq<T> sortCachedDesc(Function<T, E> function) {
+        return map(t -> new Pair<>(t, function.apply(t)))
+                .sortByDesc(p -> p.second)
+                .map(p -> p.first);
+    }
+
+    default ArraySeq<T> sorted() {
+        return sortWith(null);
+    }
+
+    default ArraySeq<T> sortedDesc() {
+        return sortWith(Collections.reverseOrder());
+    }
+
+    default ArraySeq<T> sortWith(Comparator<T> comparator) {
+        ArraySeq<T> list = toList();
+        list.sort(comparator);
+        return list;
+    }
+
+    default ArraySeq<T> sortWithDesc(Comparator<T> comparator) {
+        return sortWith(comparator.reversed());
+    }
+
+    default double sum(ToDoubleFunction<T> function) {
+        return reduce(Reducer.sum(function));
+    }
+
+    default int sumInt(ToIntFunction<T> function) {
+        return reduce(Reducer.sumInt(function));
+    }
+
+    default long sumLong(ToLongFunction<T> function) {
+        return reduce(Reducer.sumLong(function));
+    }
+
+    default Seq<T> take(int n) {
+        return n <= 0 ? empty() : c -> {
+            int[] i = {n};
+            consumeTillStop(t -> {
+                c.accept(t);
+                if (--i[0] == 0) {
+                    stop();
+                }
+            });
+        };
+    }
+
+    default <E> Seq<T> takeWhile(Function<T, E> function, BiPredicate<E, E> testPrevCurr) {
+        return c -> {
+            Mutable<E> m = new Mutable<>(null);
+            consumeTillStop(t -> {
+                E curr = function.apply(t);
+                if (m.it == null || testPrevCurr.test(m.it, curr)) {
+                    c.accept(t);
+                    m.it = curr;
+                } else {
+                    stop();
+                }
+            });
+        };
+    }
+
+    default Seq<T> takeWhile(Predicate<T> predicate) {
+        return c -> consumeTillStop(t -> {
+            if (predicate.test(t)) {
+                c.accept(t);
+            } else {
+                stop();
+            }
+        });
+    }
+
+    default Seq<T> takeWhileEquals() {
+        return takeWhile(t -> t, Objects::equals);
+    }
+
+    default <E> Seq<T> takeWhileEquals(Function<T, E> function) {
+        return takeWhile(function, Objects::equals);
+    }
+
+    default Seq<T> timeLimit(long millis) {
+        return millis <= 0 ? this : c -> {
+            long end = System.currentTimeMillis() + millis;
+            consumeTillStop(t -> {
+                if (System.currentTimeMillis() > end) {
+                    stop();
+                }
+                c.accept(t);
+            });
+        };
+    }
 
     default <E> E reduce(E des, BiConsumer<E, T> accumulator) {
         consume(t -> accumulator.accept(des, t));
@@ -476,25 +901,6 @@ public interface Seq<T> extends Seq0<Consumer<T>>{
         return transducer.transformer().apply(reduce(transducer.reducer()));
     }
 
-    default <K> SeqMap<K, ArraySeq<T>> groupBy(Function<T, K> toKey) {
-        return groupBy(toKey, Reducer.toList());
-    }
-
-    default <K> SeqMap<K, T> groupBy(Function<T, K> toKey, BinaryOperator<T> operator) {
-        return groupBy(toKey, Transducer.of(operator));
-    }
-
-    default <K, E> SeqMap<K, ArraySeq<E>> groupBy(Function<T, K> toKey, Function<T, E> toValue) {
-        return groupBy(toKey, Reducer.mapping(toValue));
-    }
-
-    default <K, V> SeqMap<K, V> groupBy(Function<T, K> toKey, Reducer<T, V> reducer) {
-        return reduce(Reducer.groupBy(toKey, reducer));
-    }
-
-    default <K, V, E> SeqMap<K, E> groupBy(Function<T, K> toKey, Transducer<T, V, E> transducer) {
-        return reduce(Reducer.groupBy(toKey, transducer));
-    }
 
 
     default BatchedSeq<T> toBatched() {
