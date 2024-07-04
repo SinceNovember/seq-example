@@ -750,6 +750,33 @@ public interface Seq<T> extends Seq0<Consumer<T>>{
         consume(System.out::println);
     }
 
+
+
+    default <E> E reduce(E des, BiConsumer<E, T> accumulator) {
+        consume(t -> accumulator.accept(des, t));
+        return des;
+    }
+
+    default <E> E reduce(Reducer<T, E> reducer) {
+        E des = reducer.supplier().get();
+        BiConsumer<E, T> accumulator = reducer.accumulator();
+        consume(t -> accumulator.accept(des, t));
+        Consumer<E> finisher = reducer.finisher();
+        if (finisher != null) {
+            finisher.accept(des);
+        }
+        return des;
+    }
+
+    default <E, V> E reduce(Reducer<T, V> reducer, Function<V, E> transformer) {
+        return transformer.apply(reduce(reducer));
+    }
+
+    default <E, V> E reduce(Transducer<T, V, E> transducer) {
+        return transducer.transformer().apply(reduce(transducer.reducer()));
+    }
+
+
     default Seq<T> replace(int n, UnaryOperator<T> operator) {
         return c -> consume(c, n, t -> c.accept(operator.apply(t)));
     }
@@ -877,37 +904,118 @@ public interface Seq<T> extends Seq0<Consumer<T>>{
         };
     }
 
-    default <E> E reduce(E des, BiConsumer<E, T> accumulator) {
-        consume(t -> accumulator.accept(des, t));
-        return des;
+    default T[] toObjArray(IntFunction<T[]> initializer) {
+        SizedSeq<T> ts = cache();
+        T[] a = initializer.apply(ts.size());
+        ts.consumeIndexed((i, t) -> a[i] = t);
+        return a;
     }
 
-    default <E> E reduce(Reducer<T, E> reducer) {
-        E des = reducer.supplier().get();
-        BiConsumer<E, T> accumulator = reducer.accumulator();
-        consume(t -> accumulator.accept(des, t));
-        Consumer<E> finisher = reducer.finisher();
-        if (finisher != null) {
-            finisher.accept(des);
-        }
-        return des;
+    default int[] toIntArray(ToIntFunction<T> function) {
+        SizedSeq<T> ts = cache();
+        int[] a = new int[ts.size()];
+        ts.consumeIndexed((i, t) -> a[i] = function.applyAsInt(t));
+        return a;
     }
 
-    default <E, V> E reduce(Reducer<T, V> reducer, Function<V, E> transformer) {
-        return transformer.apply(reduce(reducer));
+    default double[] toDoubleArray(ToDoubleFunction<T> function) {
+        SizedSeq<T> ts = cache();
+        double[] a = new double[ts.size()];
+        ts.consumeIndexed((i, t) -> a[i] = function.applyAsDouble(t));
+        return a;
     }
 
-    default <E, V> E reduce(Transducer<T, V, E> transducer) {
-        return transducer.transformer().apply(reduce(transducer.reducer()));
+    default long[] toLongArray(ToLongFunction<T> function) {
+        SizedSeq<T> ts = cache();
+        long[] a = new long[ts.size()];
+        ts.consumeIndexed((i, t) -> a[i] = function.applyAsLong(t));
+        return a;
     }
 
-
+    default boolean[] toBooleanArray(Predicate<T> function) {
+        SizedSeq<T> ts = cache();
+        boolean[] a = new boolean[ts.size()];
+        ts.consumeIndexed((i, t) -> a[i] = function.test(t));
+        return a;
+    }
 
     default BatchedSeq<T> toBatched() {
         return reduce(new BatchedSeq<>(), BatchedSeq::add);
     }
 
+    default LinkedSeq<T> toLinked() {
+        return reduce(new LinkedSeq<>(), LinkedSeq::add);
+    }
+
+    default ArraySeq<T> toList() {
+        return reduce(new ArraySeq<>(sizeOrDefault()), ArraySeq::add);
+    }
+
+    default <K, V> SeqMap<K, V> toMap(Function<T, K> toKey, Function<T, V> toValue) {
+        return reduce(Reducer.toMap(() -> new LinkedHashMap<>(sizeOrDefault()), toKey, toValue));
+    }
+
+    default <K> SeqMap<K, T> toMapBy(Function<T, K> toKey) {
+        return toMap(toKey, v -> v);
+    }
+
+    default <V> SeqMap<T, V> toMapWith(Function<T, V> toValue) {
+        return toMap(k -> k, toValue);
+    }
+
+    default SeqSet<T> toSet() {
+        return reduce(Reducer.toSet(sizeOrDefault()));
+    }
+
+    default <A, B, D> Seq3<A, B, D> triple(BiConsumer<Consumer3<A, B, D>, T> consumer) {
+        return c -> consume(t -> consumer.accept(c, t));
+    }
+
+    default <A, B, D> Seq3<A, B, D> triple(Function<T, A> f1, Function<T, B> f2, Function<T, D> f3) {
+        return c -> consume(t -> c.accept(f1.apply(t), f2.apply(t), f3.apply(t)));
+    }
+
+    default Seq<IntPair<T>> withInt(ToIntFunction<T> function) {
+        return map(t -> new IntPair<>(function.applyAsInt(t), t));
+    }
+
+    default Seq<DoublePair<T>> withDouble(ToDoubleFunction<T> function) {
+        return map(t -> new DoublePair<>(function.applyAsDouble(t), t));
+    }
+
+    default Seq<LongPair<T>> withLong(ToLongFunction<T> function) {
+        return map(t -> new LongPair<>(function.applyAsLong(t), t));
+    }
+
+    default Seq<BoolPair<T>> withBool(Predicate<T> function) {
+        return map(t -> new BoolPair<>(function.test(t), t));
+    }
+
+    default Seq<IntPair<T>> withIndex() {
+        return c -> consumeIndexed((i, t) -> c.accept(new IntPair<>(i, t)));
+    }
+
+
+    default <B, C> Seq3<T, B, C> zip(Iterable<B> bs, Iterable<C> cs) {
+        return c -> zip(bs, cs, c);
+    }
+
+    default <B, C> void zip(Iterable<B> bs, Iterable<C> cs, Consumer3<T, B, C> consumer) {
+        Iterator<B> bi = bs.iterator();
+        Iterator<C> ci = cs.iterator();
+        consumeTillStop(t -> consumer.accept(t, ItrUtil.pop(bi), ItrUtil.pop(ci)));
+    }
+
+    default <E> Seq2<T, E> zip(Iterable<E> iterable) {
+        return c -> zip(iterable, c);
+    }
+
+    default <E> void zip(Iterable<E> iterable, BiConsumer<T, E> consumer) {
+        Iterator<E> iterator = iterable.iterator();
+        consumeTillStop(t -> consumer.accept(t, ItrUtil.pop(iterator)));
+    }
     interface IntObjToInt<T> {
+
         int apply(int acc, T t);
     }
 
