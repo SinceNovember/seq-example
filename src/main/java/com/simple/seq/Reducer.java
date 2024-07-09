@@ -272,6 +272,11 @@ public interface Reducer<T, V> {
         return of(BatchedSeq::new, BatchedSeq::add);
     }
 
+    static <T> Reducer<T, ConcurrentSeq<T>> toConcurrent() {
+        return of(ConcurrentSeq::new, ConcurrentSeq::add);
+    }
+
+
     static <T> Reducer<T, LinkedSeq<T>> toLinked() {
         return of(LinkedSeq::new, LinkedSeq::add);
     }

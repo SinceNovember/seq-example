@@ -186,9 +186,6 @@ public interface Seq<T> extends Seq0<Consumer<T>>{
         return toBatched();
     }
 
-    default T reduce(BinaryOperator<T> binaryOperator) {
-        return reduce(Transducer.of(binaryOperator));
-    }
 
     default double average(ToDoubleFunction<T> function) {
         return average(function, null);
@@ -732,6 +729,21 @@ public interface Seq<T> extends Seq0<Consumer<T>>{
         });
     }
 
+    default Seq<T> parallel() {
+        return parallel(Async.common());
+    }
+
+    default Seq<T> parallel(Async async) {
+        return c -> async.joinAll(map(t -> () -> c.accept(t)));
+    }
+
+    default Seq<T> parallelNoJoin() {
+        return parallelNoJoin(Async.common());
+    }
+
+    default Seq<T> parallelNoJoin(Async async) {
+        return c -> consume(t -> async.submit(() -> c.accept(t)));
+    }
 
 
     default Seq<T> partial(int n, Consumer<T> substitute) {
@@ -751,6 +763,9 @@ public interface Seq<T> extends Seq0<Consumer<T>>{
     }
 
 
+    default T reduce(BinaryOperator<T> binaryOperator) {
+        return reduce(Transducer.of(binaryOperator));
+    }
 
     default <E> E reduce(E des, BiConsumer<E, T> accumulator) {
         consume(t -> accumulator.accept(des, t));
@@ -941,6 +956,10 @@ public interface Seq<T> extends Seq0<Consumer<T>>{
 
     default BatchedSeq<T> toBatched() {
         return reduce(new BatchedSeq<>(), BatchedSeq::add);
+    }
+
+    default ConcurrentSeq<T> toConcurrent() {
+        return reduce(new ConcurrentSeq<>(), ConcurrentSeq::add);
     }
 
     default LinkedSeq<T> toLinked() {

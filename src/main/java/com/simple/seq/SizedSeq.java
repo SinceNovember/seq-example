@@ -56,6 +56,29 @@ public interface SizedSeq<T> extends ItrSeq<T> {
                 return toList();
             }
 
+        };
+    }
+
+    @Override
+    default <E> ItrSeq<E> map(Function<T, E> function, int n, Function<T, E> substitute) {
+        if (n >= size()) {
+            return map(substitute);
+        } else {
+            return ItrSeq.super.map(function, n, substitute);
         }
+    }
+
+    @Override
+    default int sizeOrDefault() {
+        return size();
+    }
+
+    @Override
+    default ItrSeq<T> take(int n) {
+        return n >= size() ? this : ItrSeq.super.take(n);
+    }
+
+    default boolean isNotEmpty() {
+        return !isEmpty();
     }
 }
